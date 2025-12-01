@@ -3,6 +3,7 @@ mod db;
 mod hyperliquid;
 mod logging;
 
+use log::info;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::sync::RwLock;
@@ -12,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     logging::setup_logging()?;
 
-    log::info!("Starting Hyperliquid Telegram Bot...");
+    info!("Starting Hyperliquid Telegram Bot...");
 
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string());
