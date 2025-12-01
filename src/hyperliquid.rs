@@ -8,7 +8,7 @@ use teloxide::{prelude::*, types::ParseMode};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
 
-const HYPERLIQUID_API: &str = "https://api.hyperliquid.xyz/info";
+const HYPERLIQUID_API: &str = "https://api.hyperliquid-testnet.xyz/info";
 const POLL_INTERVAL_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,8 +23,6 @@ pub struct Position {
     pub unrealized_pnl: String,
     #[serde(rename = "liquidationPx")]
     pub liquidation_px: Option<String>,
-    #[serde(rename = "marginUsed")]
-    pub margin_used: String,
     pub leverage: Option<Leverage>,
 }
 
@@ -45,21 +43,12 @@ pub struct AssetPosition {
 #[serde(rename_all = "camelCase")]
 pub struct UserState {
     pub asset_positions: Vec<AssetPosition>,
-    pub margin_summary: MarginSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MarginSummary {
-    pub account_value: String,
-    pub total_margin_used: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct CachedPosition {
     pub size: String,
     pub entry_px: String,
-    pub margin_used: String,
     pub unrealized_pnl: String,
     pub leverage: u32,
 }
@@ -98,24 +87,24 @@ pub async fn monitor_positions(pool: SqlitePool, bot: Bot, state: Arc<RwLock<Pos
             }
         };
 
-        let mut wallet_users: HashMap<String, Vec<i64>> = HashMap::new();
+        let mut wallet_users: HashMap<String, Vec<(i64, Option<String>)>> = HashMap::new();
         for wallet in &wallets {
             wallet_users
                 .entry(wallet.wallet_address.clone())
                 .or_default()
-                .push(wallet.user_id);
+                .push((wallet.user_id, wallet.note.clone()));
         }
 
-        for (wallet_address, user_ids) in wallet_users {
+        for (wallet_address, user_infos) in wallet_users {
             match fetch_user_state(&client, &wallet_address).await {
                 Ok(user_state) => {
                     let changes =
                         detect_position_changes(&state, &wallet_address, &user_state).await;
 
                     for change in changes {
-                        for &user_id in &user_ids {
+                        for (user_id, note) in &user_infos {
                             if let Err(e) =
-                                send_position_notification(&bot, user_id, &wallet_address, &change)
+                                send_position_notification(&bot, *user_id, &wallet_address, note.as_deref(), &change)
                                     .await
                             {
                                 error!("Failed to send notification to {}: {}", user_id, e);
@@ -131,7 +120,7 @@ pub async fn monitor_positions(pool: SqlitePool, bot: Bot, state: Arc<RwLock<Pos
     }
 }
 
-async fn fetch_user_state(client: &Client, wallet_address: &str) -> anyhow::Result<UserState> {
+pub async fn fetch_user_state(client: &Client, wallet_address: &str) -> anyhow::Result<UserState> {
     let request_body = serde_json::json!({
         "type": "clearinghouseState",
         "user": wallet_address
@@ -181,26 +170,6 @@ pub enum PositionChange {
         leverage: u32,
         is_long: bool,
     },
-    MarginAdded {
-        coin: String,
-        old_margin: f64,
-        new_margin: f64,
-        leverage: u32,
-        is_long: bool,
-    },
-    MarginRemoved {
-        coin: String,
-        old_margin: f64,
-        new_margin: f64,
-        leverage: u32,
-        is_long: bool,
-    },
-    Liquidated {
-        coin: String,
-        lost_margin: f64,
-        was_long: bool,
-        leverage: u32,
-    },
 }
 
 async fn detect_position_changes(
@@ -223,39 +192,23 @@ async fn detect_position_changes(
         .map(|ap| (ap.position.coin.clone(), &ap.position))
         .collect();
 
-    // Check for closed/liquidated positions
+    // Check for closed positions
     let old_coins: Vec<String> = old_positions.keys().cloned().collect();
     for coin in old_coins {
         if !current_map.contains_key(&coin)
             && let Some(old_pos) = old_positions.remove(&coin)
         {
             let was_long = !old_pos.size.starts_with('-');
-            let old_size: f64 = old_pos.size.parse::<f64>().unwrap_or(0.0).abs();
-            let margin: f64 = old_pos.margin_used.parse().unwrap_or(0.0);
             let unrealized_pnl: f64 = old_pos.unrealized_pnl.parse().unwrap_or(0.0);
-
-            // If margin was significant and PnL is very negative (close to -margin), likely liquidated
-            let is_liquidated =
-                margin > 0.0 && unrealized_pnl < 0.0 && (unrealized_pnl.abs() / margin) > 0.9;
-
             let entry_price: f64 = old_pos.entry_px.parse().unwrap_or(0.0);
 
-            if is_liquidated && old_size > 0.0 {
-                changes.push(PositionChange::Liquidated {
-                    coin,
-                    lost_margin: margin,
-                    was_long,
-                    leverage: old_pos.leverage,
-                });
-            } else {
-                changes.push(PositionChange::Closed {
-                    coin,
-                    realized_pnl: unrealized_pnl,
-                    entry_price,
-                    was_long,
-                    leverage: old_pos.leverage,
-                });
-            }
+            changes.push(PositionChange::Closed {
+                coin,
+                realized_pnl: unrealized_pnl,
+                entry_price,
+                was_long,
+                leverage: old_pos.leverage,
+            });
         }
     }
 
@@ -268,13 +221,11 @@ async fn detect_position_changes(
             .as_ref()
             .and_then(|p| p.parse().ok())
             .unwrap_or(0.0);
-        let new_margin: f64 = position.margin_used.parse().unwrap_or(0.0);
         let position_value: f64 = position.position_value.parse().unwrap_or(0.0);
         let leverage = position.leverage.as_ref().map(|l| l.value).unwrap_or(1);
 
         if let Some(old_pos) = old_positions.get(coin) {
             let old_size: f64 = old_pos.size.parse().unwrap_or(0.0);
-            let old_margin: f64 = old_pos.margin_used.parse().unwrap_or(0.0);
             let old_pnl: f64 = old_pos.unrealized_pnl.parse().unwrap_or(0.0);
 
             // Check for size changes
@@ -305,29 +256,6 @@ async fn detect_position_changes(
                     });
                 }
             }
-            // Check for margin changes (if size didn't change significantly)
-            else {
-                let margin_diff = (new_margin - old_margin).abs();
-                if margin_diff > 0.01 {
-                    if new_margin > old_margin {
-                        changes.push(PositionChange::MarginAdded {
-                            coin: coin.clone(),
-                            old_margin,
-                            new_margin,
-                            leverage,
-                            is_long,
-                        });
-                    } else {
-                        changes.push(PositionChange::MarginRemoved {
-                            coin: coin.clone(),
-                            old_margin,
-                            new_margin,
-                            leverage,
-                            is_long,
-                        });
-                    }
-                }
-            }
         } else {
             changes.push(PositionChange::Opened {
                 coin: coin.clone(),
@@ -344,7 +272,6 @@ async fn detect_position_changes(
             CachedPosition {
                 size: position.szi.clone(),
                 entry_px: position.entry_px.clone().unwrap_or_default(),
-                margin_used: position.margin_used.clone(),
                 unrealized_pnl: position.unrealized_pnl.clone(),
                 leverage,
             },
@@ -362,6 +289,16 @@ fn format_pnl(pnl: f64) -> String {
     }
 }
 
+fn format_price(price: f64) -> String {
+    let s = format!("${}", price);
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn format_size(size: f64) -> String {
+    let s = format!("{}", size);
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 fn direction_emoji(is_long: bool) -> &'static str {
     if is_long { "🟢" } else { "🔴" }
 }
@@ -374,12 +311,23 @@ async fn send_position_notification(
     bot: &Bot,
     user_id: i64,
     wallet_address: &str,
+    note: Option<&str>,
     change: &PositionChange,
 ) -> anyhow::Result<()> {
-    let short_wallet = format!(
+    let wallet_display = format!(
         "{}...{}",
         &wallet_address[..6],
         &wallet_address[wallet_address.len() - 4..]
+    );
+
+    let wallet_display = match note {
+        Some(n) => format!("{} ({})", wallet_display, n),
+        None => wallet_display,
+    };
+
+    let hyperdash_link = format!(
+        "<a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
+        wallet_address
     );
 
     let message = match change {
@@ -393,17 +341,20 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>{} {}x {} {} Opened</b>\n\n\
-                 <code>{}</code>\n\
-                 Size: {} | ${:.2}\n\
-                 Entry: ${:.4}",
+                 <code>{}</code>\n\n\
+                 📊 <b>Size:</b> {} {} <i>(${:.2})</i>\n\
+                 💰 <b>Entry:</b> {}\n\
+                 {}",
                 direction_emoji(*is_long),
                 leverage,
                 coin,
                 direction_str(*is_long),
-                short_wallet,
-                size,
+                wallet_display,
+                format_size(*size),
+                coin,
                 position_value,
-                entry_price
+                format_price(*entry_price),
+                hyperdash_link
             )
         }
         PositionChange::Closed {
@@ -415,16 +366,18 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>{} {}x {} {} Closed</b>\n\n\
-                 <code>{}</code>\n\
-                 Entry: ${:.4}\n\
-                 PnL: {}",
+                 <code>{}</code>\n\n\
+                 💰 <b>Entry:</b> {}\n\
+                 📈 <b>PnL:</b> {}\n\
+                 {}",
                 direction_emoji(*was_long),
                 leverage,
                 coin,
                 direction_str(*was_long),
-                short_wallet,
-                entry_price,
-                format_pnl(*realized_pnl)
+                wallet_display,
+                format_price(*entry_price),
+                format_pnl(*realized_pnl),
+                hyperdash_link
             )
         }
         PositionChange::Increased {
@@ -437,17 +390,20 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>{} {}x {} {} Increased</b>\n\n\
-                 <code>{}</code>\n\
-                 Size: {:.4} → {:.4}\n\
-                 Entry: ${:.4}",
+                 <code>{}</code>\n\n\
+                 📊 <b>Size:</b> {} → {} {}\n\
+                 💰 <b>Entry:</b> {}\n\
+                 {}",
                 direction_emoji(*is_long),
                 leverage,
                 coin,
                 direction_str(*is_long),
-                short_wallet,
-                old_size,
-                new_size,
-                entry_price
+                wallet_display,
+                format_size(*old_size),
+                format_size(*new_size),
+                coin,
+                format_price(*entry_price),
+                hyperdash_link
             )
         }
         PositionChange::Decreased {
@@ -461,76 +417,22 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>{} {}x {} {} Decreased</b>\n\n\
-                 <code>{}</code>\n\
-                 Size: {:.4} → {:.4}\n\
-                 Entry: ${:.4}\n\
-                 PnL: {}",
+                 <code>{}</code>\n\n\
+                 📊 <b>Size:</b> {} → {} {}\n\
+                 💰 <b>Entry:</b> {}\n\
+                 📈 <b>PnL:</b> {}\n\
+                 {}",
                 direction_emoji(*is_long),
                 leverage,
                 coin,
                 direction_str(*is_long),
-                short_wallet,
-                old_size,
-                new_size,
-                entry_price,
-                format_pnl(*realized_pnl)
-            )
-        }
-        PositionChange::MarginAdded {
-            coin,
-            old_margin,
-            new_margin,
-            leverage,
-            is_long,
-        } => {
-            format!(
-                "<b>➕ {}x {} {} Margin Added</b>\n\n\
-                 <code>{}</code>\n\
-                 Margin: ${:.2} → ${:.2} (+${:.2})",
-                leverage,
+                wallet_display,
+                format_size(*old_size),
+                format_size(*new_size),
                 coin,
-                direction_str(*is_long),
-                short_wallet,
-                old_margin,
-                new_margin,
-                new_margin - old_margin
-            )
-        }
-        PositionChange::MarginRemoved {
-            coin,
-            old_margin,
-            new_margin,
-            leverage,
-            is_long,
-        } => {
-            format!(
-                "<b>➖ {}x {} {} Margin Removed</b>\n\n\
-                 <code>{}</code>\n\
-                 Margin: ${:.2} → ${:.2} (-${:.2})",
-                leverage,
-                coin,
-                direction_str(*is_long),
-                short_wallet,
-                old_margin,
-                new_margin,
-                old_margin - new_margin
-            )
-        }
-        PositionChange::Liquidated {
-            coin,
-            lost_margin,
-            was_long,
-            leverage,
-        } => {
-            format!(
-                "<b>💀 {}x {} {} Liquidated</b>\n\n\
-                 <code>{}</code>\n\
-                 Lost: 🔴 -${:.2}",
-                leverage,
-                coin,
-                direction_str(*was_long),
-                short_wallet,
-                lost_margin
+                format_price(*entry_price),
+                format_pnl(*realized_pnl),
+                hyperdash_link
             )
         }
     };
