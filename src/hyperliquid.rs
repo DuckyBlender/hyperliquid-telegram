@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::{prelude::*, types::ParseMode};
 use tokio::sync::RwLock;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 const HYPERLIQUID_API: &str = "https://api.hyperliquid.xyz/info";
 const POLL_INTERVAL_SECS: u64 = 10;
@@ -89,11 +89,15 @@ pub async fn monitor_positions(pool: SqlitePool, bot: Bot, state: Arc<RwLock<Pos
         for (wallet_address, user_ids) in wallet_users {
             match fetch_positions(&client, &wallet_address).await {
                 Ok(positions) => {
-                    let changes = detect_position_changes(&state, &wallet_address, &positions).await;
+                    let changes =
+                        detect_position_changes(&state, &wallet_address, &positions).await;
 
                     for change in changes {
                         for &user_id in &user_ids {
-                            if let Err(e) = send_position_notification(&bot, user_id, &wallet_address, &change).await {
+                            if let Err(e) =
+                                send_position_notification(&bot, user_id, &wallet_address, &change)
+                                    .await
+                            {
                                 log::error!("Failed to send notification to {}: {}", user_id, e);
                             }
                         }
@@ -215,11 +219,24 @@ async fn send_position_notification(
     wallet_address: &str,
     change: &PositionChange,
 ) -> anyhow::Result<()> {
-    let short_wallet = format!("{}...{}", &wallet_address[..6], &wallet_address[wallet_address.len() - 4..]);
+    let short_wallet = format!(
+        "{}...{}",
+        &wallet_address[..6],
+        &wallet_address[wallet_address.len() - 4..]
+    );
 
     let message = match change {
-        PositionChange::Opened { coin, size, entry_price, leverage } => {
-            let direction = if size.starts_with('-') { "🔴 SHORT" } else { "🟢 LONG" };
+        PositionChange::Opened {
+            coin,
+            size,
+            entry_price,
+            leverage,
+        } => {
+            let direction = if size.starts_with('-') {
+                "🔴 SHORT"
+            } else {
+                "🟢 LONG"
+            };
             let size_abs = size.trim_start_matches('-');
 
             format!(
@@ -241,8 +258,17 @@ async fn send_position_notification(
                 short_wallet, coin
             )
         }
-        PositionChange::Updated { coin, old_size, new_size, entry_price } => {
-            let direction = if new_size.starts_with('-') { "🔴 SHORT" } else { "🟢 LONG" };
+        PositionChange::Updated {
+            coin,
+            old_size,
+            new_size,
+            entry_price,
+        } => {
+            let direction = if new_size.starts_with('-') {
+                "🔴 SHORT"
+            } else {
+                "🟢 LONG"
+            };
 
             format!(
                 "<b>🔄 Position Updated</b>\n\n\
@@ -256,10 +282,14 @@ async fn send_position_notification(
         }
     };
 
-    bot.send_message(teloxide::types::ChatId(user_id), message)
+    bot.send_message(ChatId(user_id), message)
         .parse_mode(ParseMode::Html)
         .await?;
 
-    log::info!("Sent notification to user {} for wallet {}", user_id, wallet_address);
+    log::info!(
+        "Sent notification to user {} for wallet {}",
+        user_id,
+        wallet_address
+    );
     Ok(())
 }

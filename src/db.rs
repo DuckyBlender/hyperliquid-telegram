@@ -1,4 +1,4 @@
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
 pub async fn init_db(database_url: &str) -> anyhow::Result<SqlitePool> {
     // Create the database file if it doesn't exist
@@ -39,7 +39,11 @@ pub struct TrackedWallet {
     pub wallet_address: String,
 }
 
-pub async fn add_wallet(pool: &SqlitePool, user_id: i64, wallet_address: &str) -> anyhow::Result<bool> {
+pub async fn add_wallet(
+    pool: &SqlitePool,
+    user_id: i64,
+    wallet_address: &str,
+) -> anyhow::Result<bool> {
     let result = sqlx::query(
         "INSERT OR IGNORE INTO tracked_wallets (user_id, wallet_address) VALUES (?, ?)",
     )
@@ -51,19 +55,25 @@ pub async fn add_wallet(pool: &SqlitePool, user_id: i64, wallet_address: &str) -
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn remove_wallet(pool: &SqlitePool, user_id: i64, wallet_address: &str) -> anyhow::Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM tracked_wallets WHERE user_id = ? AND wallet_address = ?",
-    )
-    .bind(user_id)
-    .bind(wallet_address.to_lowercase())
-    .execute(pool)
-    .await?;
+pub async fn remove_wallet(
+    pool: &SqlitePool,
+    user_id: i64,
+    wallet_address: &str,
+) -> anyhow::Result<bool> {
+    let result =
+        sqlx::query("DELETE FROM tracked_wallets WHERE user_id = ? AND wallet_address = ?")
+            .bind(user_id)
+            .bind(wallet_address.to_lowercase())
+            .execute(pool)
+            .await?;
 
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn get_user_wallets(pool: &SqlitePool, user_id: i64) -> anyhow::Result<Vec<TrackedWallet>> {
+pub async fn get_user_wallets(
+    pool: &SqlitePool,
+    user_id: i64,
+) -> anyhow::Result<Vec<TrackedWallet>> {
     let wallets = sqlx::query_as::<_, TrackedWallet>(
         "SELECT id, user_id, wallet_address FROM tracked_wallets WHERE user_id = ?",
     )
