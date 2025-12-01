@@ -3,7 +3,7 @@ use reqwest::Client;
 use sqlx::SqlitePool;
 use std::time::Duration;
 use teloxide::{
-    prelude::*, sugar::request::RequestReplyExt, types::{Message, ParseMode}, utils::command::BotCommands
+    prelude::*, sugar::request::RequestReplyExt, types::{Message, ParseMode}, utils::{command::BotCommands, html}
 };
 
 use crate::db;
@@ -112,7 +112,7 @@ async fn handle_command(
             match db::add_wallet(&pool, user_id, wallet, note).await {
                 Ok(true) => {
                     info!("User {} added wallet {}", user_id, wallet);
-                    let note_text = note.map(|n| format!(" ({})", n)).unwrap_or_default();
+                    let note_text = note.map(|n| format!(" ({})", html::escape(n))).unwrap_or_default();
                     bot.send_message(
                         msg.chat.id,
                         format!(
@@ -197,8 +197,8 @@ async fn handle_command(
                         .iter()
                         .enumerate()
                         .map(|(i, w)| {
-                            let note_text = w.note.as_ref().map(|n| format!(" - {}", n)).unwrap_or_default();
-                            format!("{}. <code>{}</code>{}", i + 1, w.wallet_address, note_text)
+                            let display = format_wallet_display(&w.wallet_address, w.note.as_deref());
+                            format!("{}. {}", i + 1, display)
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -252,11 +252,9 @@ async fn handle_command(
                 .build()
                 .expect("Failed to create HTTP client");
 
-            let wallet_display = format!(
-                "{}...{}",
-                &wallet[..6],
-                &wallet[wallet.len() - 4..]
-            );
+            // Get note for wallet if exists
+            let note = db::get_wallet_note(&pool, wallet).await.ok().flatten();
+            let wallet_display = format_wallet_display(wallet, note.as_deref());
 
             let hyperdash_link = format!(
                 "<a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
@@ -275,7 +273,10 @@ async fn handle_command(
                         bot.send_message(
                             msg.chat.id,
                             format!(
-                                "<b>📊 Open Positions</b>\n\n<code>{}</code>\n\n<i>No open positions</i>\n{}",
+                                "<b>📊 Open Positions</b>\n\n\
+                                 👛 Wallet: {}\n\n\
+                                 <i>No open positions</i>\n\n\
+                                 {}",
                                 wallet_display,
                                 hyperdash_link
                             ),
@@ -284,37 +285,70 @@ async fn handle_command(
                         .parse_mode(ParseMode::Html)
                         .await?;
                     } else {
-                        let mut message = format!("<b>📊 Open Positions</b>\n\n<code>{}</code>\n", wallet_display);
+                        let mut message = format!(
+                            "<b>📊 Open Positions</b>\n\n\
+                             👛 Wallet: {}\n",
+                            wallet_display
+                        );
                         for ap in positions {
                             let pos = &ap.position;
                             let size: f64 = pos.szi.parse().unwrap_or(0.0);
                             let is_long = size > 0.0;
                             let entry_price: f64 = pos.entry_px.as_ref().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+                            let position_value: f64 = pos.position_value.parse().unwrap_or(0.0);
+                            let current_price = if size.abs() > 0.0 { position_value / size.abs() } else { 0.0 };
                             let unrealized_pnl: f64 = pos.unrealized_pnl.parse().unwrap_or(0.0);
                             let leverage = pos.leverage.as_ref().map(|l| l.value).unwrap_or(1);
-                            let direction = if is_long { "🟢" } else { "🔴" };
                             let direction_str = if is_long { "Long" } else { "Short" };
+                            let direction_emoji = if is_long { "🟢" } else { "🔴" };
                             let pnl_str = if unrealized_pnl >= 0.0 {
-                                format!("+${:.2}", unrealized_pnl)
+                                format!("<b>+${:.2}</b>", unrealized_pnl)
                             } else {
-                                format!("-${:.2}", unrealized_pnl.abs())
+                                format!("<b>-${:.2}</b>", unrealized_pnl.abs())
                             };
+                            // Calculate PnL percentage (based on entry value)
+                            let entry_value = entry_price * size.abs();
+                            let pnl_pct = if entry_value > 0.0 { (unrealized_pnl / entry_value) * 100.0 } else { 0.0 };
+                            let pnl_pct_str = if pnl_pct >= 0.0 {
+                                format!("+{:.2}%", pnl_pct)
+                            } else {
+                                format!("{:.2}%", pnl_pct)
+                            };
+                            // Round to avoid floating point artifacts like 2744.7999999999997
+                            let current_price_rounded = (current_price * 10000000000.0).round() / 10000000000.0; // 10 decimal places
                             let entry_str = format!("{}", entry_price).trim_end_matches('0').trim_end_matches('.').to_string();
+                            let current_str = format!("{}", current_price_rounded).trim_end_matches('0').trim_end_matches('.').to_string();
                             let size_str = format!("{}", size.abs()).trim_end_matches('0').trim_end_matches('.').to_string();
+                            
+                            // Calculate price difference
+                            let price_diff = current_price_rounded - entry_price;
+                            let price_diff_str = if price_diff >= 0.0 {
+                                format!("+${:.2}", price_diff)
+                            } else {
+                                format!("-${:.2}", price_diff.abs())
+                            };
 
                             message.push_str(&format!(
-                                "\n{} <b>{}x {} {}</b>\n   📊 {} {}\n   💰 ${}\n   📈 {}\n",
-                                direction,
+                                "\n{} <b>{}x {} {}</b>\n\
+                                 📊 Size: {} {} (${:.2})\n\
+                                 💰 Entry: ${}\n\
+                                 📍 Current: ${} ({})\n\
+                                 💵 PnL: {} ({})\n",
+                                direction_emoji,
                                 leverage,
                                 pos.coin,
                                 direction_str,
                                 size_str,
                                 pos.coin,
+                                position_value,
                                 entry_str,
-                                pnl_str
+                                current_str,
+                                price_diff_str,
+                                pnl_str,
+                                pnl_pct_str
                             ));
                         }
-                        message.push_str(&hyperdash_link);
+                        message.push_str(&format!("\n{}", hyperdash_link));
                         bot.send_message(msg.chat.id, message)
                             .reply_to(msg.id)
                             .parse_mode(ParseMode::Html)
@@ -342,4 +376,16 @@ fn is_valid_address(address: &str) -> bool {
     address.starts_with("0x")
         && address.len() == 42
         && address[2..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
+    let short_addr = format!(
+        "{}...{}",
+        &wallet_address[..6],
+        &wallet_address[wallet_address.len() - 4..]
+    );
+    match note {
+        Some(n) => format!("<code>{}</code> - {}", short_addr, html::escape(n)),
+        None => format!("<code>{}</code>", short_addr),
+    }
 }

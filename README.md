@@ -28,11 +28,3 @@ A Telegram bot that tracks wallet positions on Hyperliquid and sends notificatio
 ## Environment Variables
 
 - `TELOXIDE_TOKEN` - Your Telegram Bot API token (required)
-- `DATABASE_URL` - Set it to `sqlite:bot.db`
-
-## Tech Stack
-
-- Rust
-- Teloxide (Telegram Bot Framework)
-- SQLite (via SQLx)
-- Hyperliquid API
