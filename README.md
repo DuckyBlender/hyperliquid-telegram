@@ -30,7 +30,7 @@ A Telegram bot that tracks wallet positions on Hyperliquid and sends notificatio
    ```
 2. Run the bot:
    ```bash
-   cargo run
+   cargo run --release
    ```
 
 The database will be created at the path specified by `DATABASE_URL` (defaults to `sqlite:data/bot.db?mode=rwc`).
@@ -41,11 +41,8 @@ The database will be created at the path specified by `DATABASE_URL` (defaults t
    ```
    TELOXIDE_TOKEN=your_bot_token_here
    ```
-2. Create a `data/` directory for the database:
-   ```bash
-   mkdir data
-   ```
-3. Run with Docker Compose:
+   
+2. Run with Docker Compose:
    ```bash
    docker compose up -d
    ```

@@ -1,6 +1,6 @@
 # Stage 1: Tools - install cargo-chef and sqlx-cli (cached layer)
 FROM rust:slim AS tools
-RUN cargo install cargo-chef 
+RUN cargo install cargo-chef
 RUN cargo install sqlx-cli --no-default-features --features sqlite,rustls
 
 # Stage 2: Chef - base with tools
