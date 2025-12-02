@@ -1,0 +1,41 @@
+# Build artifacts
+/target/
+debug/
+release/
+
+# Dependencies
+Cargo.lock
+
+# Environment files
+.env
+.env.local
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Log files
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Temporary files
+*.tmp
+*.bak

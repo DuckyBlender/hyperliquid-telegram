@@ -10,7 +10,7 @@ use tokio::time::{Duration, interval};
 
 use crate::db;
 
-const HYPERLIQUID_API: &str = "https://api.hyperliquid-testnet.xyz/info";
+const HYPERLIQUID_API: &str = "https://api.hyperliquid.xyz/info";
 const POLL_INTERVAL_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

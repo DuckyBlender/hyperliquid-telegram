@@ -1,0 +1,12 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hyperliquid-telegram
+    restart: unless-stopped
+    environment:
+      - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
+      - DATABASE_URL=sqlite:/app/data/bot.db?mode=rwc
+    volumes:
+      - ./data:/app/data

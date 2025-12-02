@@ -5,7 +5,7 @@ A Telegram bot that tracks wallet positions on Hyperliquid and sends notificatio
 ## Features
 
 - 📊 **Position Tracking** - Monitor any wallet's positions on Hyperliquid
-- 🔔 **Real-time Notifications** - Get alerts when positions are opened, closed, increased, or decreased
+- 🔔 **Real-time Notifications** - Get alerts when positions are opened, closed, increased, or decreased within 10 seconds (realtime coming soon)
 - 📋 **Multiple Wallets** - Track multiple wallets with optional notes/labels
 - 📈 **View Positions** - Check current open positions for all tracked wallets
 
@@ -22,9 +22,32 @@ A Telegram bot that tracks wallet positions on Hyperliquid and sends notificatio
 
 ## Setup
 
-1. Set the `TELOXIDE_TOKEN` environment variable with your Telegram bot token
-2. Run the bot with `cargo run`
+### Standalone
 
-## Environment Variables
+1. Create a `.env` file with your Telegram bot token:
+   ```
+   TELOXIDE_TOKEN=your_bot_token_here
+   ```
+2. Run the bot:
+   ```bash
+   cargo run
+   ```
 
-- `TELOXIDE_TOKEN` - Your Telegram Bot API token (required)
+The database will be created at the path specified by `DATABASE_URL` (defaults to `sqlite:data/bot.db?mode=rwc`).
+
+### Docker
+
+1. Create a `.env` file with your Telegram bot token:
+   ```
+   TELOXIDE_TOKEN=your_bot_token_here
+   ```
+2. Create a `data/` directory for the database:
+   ```bash
+   mkdir data
+   ```
+3. Run with Docker Compose:
+   ```bash
+   docker compose up -d
+   ```
+
+The `data/` directory is mounted as a volume to persist the SQLite database. This directory mount is required (rather than mounting a single file) because SQLite creates additional temporary files (`-wal`, `-shm`) alongside the main database.
