@@ -302,7 +302,7 @@ async fn handle_command(
                         .enumerate()
                         .map(|(i, w)| {
                             let display =
-                                format_wallet_display_full(&w.wallet_address, w.note.as_deref());
+                                format_wallet_display(&w.wallet_address, w.note.as_deref(), true);
                             format!("{}. {}", i + 1, display)
                         })
                         .collect::<Vec<_>>()
@@ -377,7 +377,7 @@ async fn handle_command(
                 .build()
                 .expect("Failed to create HTTP client");
 
-            let wallet_display = format_wallet_display(&wallet, note.as_deref());
+            let wallet_display = format_wallet_display(&wallet, note.as_deref(), false);
 
             let hyperdash_link = format!(
                 "<a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
@@ -563,21 +563,18 @@ async fn resolve_wallet_identifier(
     Ok(None)
 }
 
-fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
-    let short_addr = format!(
-        "{}...{}",
-        &wallet_address[..6],
-        &wallet_address[wallet_address.len() - 4..]
-    );
+pub fn format_wallet_display(wallet_address: &str, note: Option<&str>, full: bool) -> String {
+    let addr = if full {
+        wallet_address.to_string()
+    } else {
+        format!(
+            "{}...{}",
+            &wallet_address[..6],
+            &wallet_address[wallet_address.len() - 4..]
+        )
+    };
     match note {
-        Some(n) => format!("<code>{}</code> - {}", short_addr, html::escape(n)),
-        None => format!("<code>{}</code>", short_addr),
-    }
-}
-
-fn format_wallet_display_full(wallet_address: &str, note: Option<&str>) -> String {
-    match note {
-        Some(n) => format!("<code>{}</code> - {}", wallet_address, html::escape(n)),
-        None => format!("<code>{}</code>", wallet_address),
+        Some(n) => format!("<code>{}</code> ({})", addr, html::escape(n)),
+        None => format!("<code>{}</code>", addr),
     }
 }

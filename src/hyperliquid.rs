@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use teloxide::{prelude::*, types::ParseMode, utils::html};
+use teloxide::{prelude::*, types::ParseMode};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
 
+use crate::bot::format_wallet_display;
 use crate::db;
 
 const HYPERLIQUID_API: &str = "https://api.hyperliquid.xyz/info";
@@ -387,18 +388,6 @@ fn direction_str(is_long: bool) -> &'static str {
     if is_long { "Long" } else { "Short" }
 }
 
-fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
-    let short_addr = format!(
-        "{}...{}",
-        &wallet_address[..6],
-        &wallet_address[wallet_address.len() - 4..]
-    );
-    match note {
-        Some(n) => format!("<code>{}</code> - {}", short_addr, html::escape(n)),
-        None => format!("<code>{}</code>", short_addr),
-    }
-}
-
 fn calculate_current_price_info(entry_price: f64, position_value: f64, size: f64) -> (f64, String) {
     let current_price = if size > 0.0 {
         position_value / size
@@ -436,7 +425,7 @@ async fn send_position_notification(
     note: Option<&str>,
     change: &PositionChange,
 ) -> anyhow::Result<()> {
-    let wallet_display = format_wallet_display(wallet_address, note);
+    let wallet_display = format_wallet_display(wallet_address, note, false);
 
     let hyperdash_link = format!(
         "🌐 <a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
@@ -454,7 +443,7 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>📈 {}x {} {} Opened</b>\n\n\
-                 👛 Wallet: <code>{}</code>\n\
+                 👛 Wallet: {}\n\
                  📊 Size: {} {} (${:.2})\n\
                  💰 Entry: {}\n\
                  {}",
@@ -478,7 +467,7 @@ async fn send_position_notification(
         } => {
             format!(
                 "<b>📉 {}x {} {} Closed</b>\n\n\
-                 👛 Wallet: <code>{}</code>\n\
+                 👛 Wallet: {}\n\
                  💰 Entry: {}\n\
                  💵 PnL: {}\n\
                  {}",
