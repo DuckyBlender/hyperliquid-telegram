@@ -16,8 +16,6 @@ pub async fn init_db(database_url: &str) -> anyhow::Result<SqlitePool> {
 
 #[derive(Debug, Clone)]
 pub struct TrackedWallet {
-    #[allow(dead_code)]
-    pub id: i64,
     pub user_id: i64,
     pub wallet_address: String,
     pub note: Option<String>,
@@ -75,7 +73,7 @@ pub async fn get_user_wallets(
 ) -> anyhow::Result<Vec<TrackedWallet>> {
     let wallets = sqlx::query_as!(
         TrackedWallet,
-        r#"SELECT id as "id!: i64", user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ?"#,
+        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ?"#,
         user_id
     )
     .fetch_all(pool)
@@ -87,7 +85,7 @@ pub async fn get_user_wallets(
 pub async fn get_all_tracked_wallets(pool: &SqlitePool) -> anyhow::Result<Vec<TrackedWallet>> {
     let wallets = sqlx::query_as!(
         TrackedWallet,
-        r#"SELECT id as "id!: i64", user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets"#
+        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets"#
     )
     .fetch_all(pool)
     .await?;
