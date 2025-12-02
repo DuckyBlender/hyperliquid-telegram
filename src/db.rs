@@ -44,23 +44,61 @@ pub async fn get_user_wallet_count(pool: &SqlitePool, user_id: i64) -> anyhow::R
     Ok(count as i64)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AddWalletResult {
+    Added,
+    Updated,
+    AlreadyExistsNoChange,
+}
+
 pub async fn add_wallet(
     pool: &SqlitePool,
     user_id: i64,
     wallet_address: &str,
     note: Option<&str>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<AddWalletResult> {
     let wallet_lower = wallet_address.to_lowercase();
-    let result = sqlx::query!(
-        "INSERT OR IGNORE INTO tracked_wallets (user_id, wallet_address, note) VALUES (?, ?, ?)",
+    
+    // Check if wallet already exists and get current note
+    let existing = sqlx::query_scalar!(
+        "SELECT note FROM tracked_wallets WHERE user_id = ? AND wallet_address = ?",
         user_id,
-        wallet_lower,
-        note
+        wallet_lower
     )
-    .execute(pool)
+    .fetch_optional(pool)
     .await?;
-
-    Ok(result.rows_affected() > 0)
+    
+    match existing {
+        Some(existing_note) => {
+            // Wallet exists, check if note is different
+            if existing_note.as_deref() == note {
+                Ok(AddWalletResult::AlreadyExistsNoChange)
+            } else {
+                // Update the note
+                sqlx::query!(
+                    "UPDATE tracked_wallets SET note = ? WHERE user_id = ? AND wallet_address = ?",
+                    note,
+                    user_id,
+                    wallet_lower
+                )
+                .execute(pool)
+                .await?;
+                Ok(AddWalletResult::Updated)
+            }
+        }
+        None => {
+            // Insert new wallet
+            sqlx::query!(
+                "INSERT INTO tracked_wallets (user_id, wallet_address, note) VALUES (?, ?, ?)",
+                user_id,
+                wallet_lower,
+                note
+            )
+            .execute(pool)
+            .await?;
+            Ok(AddWalletResult::Added)
+        }
+    }
 }
 
 pub async fn remove_wallet(
@@ -86,7 +124,7 @@ pub async fn get_user_wallets(
 ) -> anyhow::Result<Vec<TrackedWallet>> {
     let wallets = sqlx::query_as!(
         TrackedWallet,
-        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ?"#,
+        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ? ORDER BY id"#,
         user_id
     )
     .fetch_all(pool)
@@ -186,4 +224,79 @@ pub async fn get_wallet_note(pool: &SqlitePool, wallet_address: &str) -> anyhow:
     .await?;
 
     Ok(result.flatten())
+}
+
+/// Check if a note already exists for a user (case-insensitive)
+pub async fn note_exists_for_user(
+    pool: &SqlitePool,
+    user_id: i64,
+    note: &str,
+    exclude_wallet: Option<&str>,
+) -> anyhow::Result<bool> {
+    let note_lower = note.to_lowercase();
+    let result = match exclude_wallet {
+        Some(wallet) => {
+            let wallet_lower = wallet.to_lowercase();
+            sqlx::query_scalar!(
+                "SELECT COUNT(*) as count FROM tracked_wallets WHERE user_id = ? AND LOWER(note) = ? AND wallet_address != ?",
+                user_id,
+                note_lower,
+                wallet_lower
+            )
+            .fetch_one(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_scalar!(
+                "SELECT COUNT(*) as count FROM tracked_wallets WHERE user_id = ? AND LOWER(note) = ?",
+                user_id,
+                note_lower
+            )
+            .fetch_one(pool)
+            .await?
+        }
+    };
+
+    Ok(result > 0)
+}
+
+/// Get wallet by index (1-based) for a user, ordered by id
+pub async fn get_wallet_by_index(
+    pool: &SqlitePool,
+    user_id: i64,
+    index: usize,
+) -> anyhow::Result<Option<TrackedWallet>> {
+    if index == 0 {
+        return Ok(None);
+    }
+    let offset = (index - 1) as i64;
+    let wallet = sqlx::query_as!(
+        TrackedWallet,
+        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ? ORDER BY id LIMIT 1 OFFSET ?"#,
+        user_id,
+        offset
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(wallet)
+}
+
+/// Get wallet by note (case-insensitive) for a user
+pub async fn get_wallet_by_note(
+    pool: &SqlitePool,
+    user_id: i64,
+    note: &str,
+) -> anyhow::Result<Option<TrackedWallet>> {
+    let note_lower = note.to_lowercase();
+    let wallet = sqlx::query_as!(
+        TrackedWallet,
+        r#"SELECT user_id as "user_id!: i64", wallet_address, note FROM tracked_wallets WHERE user_id = ? AND LOWER(note) = ?"#,
+        user_id,
+        note_lower
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(wallet)
 }

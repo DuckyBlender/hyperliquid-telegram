@@ -109,34 +109,67 @@ async fn handle_command(
                 return Ok(());
             }
 
-            // Check wallet limit
-            match db::get_user_wallet_count(&pool, user_id).await {
-                Ok(count) if count >= db::MAX_WALLETS_PER_USER => {
+            // Validate note is not a reserved number (1-10)
+            if let Some(n) = note {
+                if is_reserved_note(n) {
                     bot.send_message(
                         msg.chat.id,
-                        format!(
-                            "❌ You've reached the maximum limit of {} tracked wallets.\n\nUse <code>/remove &lt;wallet&gt;</code> to remove a wallet first.",
-                            db::MAX_WALLETS_PER_USER
-                        ),
+                        "❌ Notes cannot be numbers 1-10 as these are reserved for wallet indexing.",
                     )
                     .reply_to(msg.id)
                     .parse_mode(ParseMode::Html)
                     .await?;
                     return Ok(());
                 }
-                Err(e) => {
-                    error!("Failed to check wallet count: {}", e);
-                    bot.send_message(msg.chat.id, "❌ Failed to add wallet. Please try again.")
+
+                // Check if note already exists (case-insensitive) for another wallet
+                match db::note_exists_for_user(&pool, user_id, n, Some(wallet)).await {
+                    Ok(true) => {
+                        bot.send_message(
+                            msg.chat.id,
+                            "❌ You already have a wallet with this note. Please use a different note.",
+                        )
                         .reply_to(msg.id)
                         .parse_mode(ParseMode::Html)
                         .await?;
-                    return Ok(());
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!("Failed to check note existence: {}", e);
+                        bot.send_message(msg.chat.id, "❌ Failed to add wallet. Please try again.")
+                            .reply_to(msg.id)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                        return Ok(());
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+
+            // Check wallet limit (only for new wallets)
+            let existing_count = db::get_user_wallet_count(&pool, user_id).await.unwrap_or(0);
+            let wallet_lower = wallet.to_lowercase();
+            let wallet_exists = db::get_user_wallets(&pool, user_id)
+                .await
+                .map(|wallets| wallets.iter().any(|w| w.wallet_address == wallet_lower))
+                .unwrap_or(false);
+
+            if !wallet_exists && existing_count >= db::MAX_WALLETS_PER_USER {
+                bot.send_message(
+                    msg.chat.id,
+                    format!(
+                        "❌ You've reached the maximum limit of {} tracked wallets.\n\nUse <code>/remove &lt;wallet&gt;</code> to remove a wallet first.",
+                        db::MAX_WALLETS_PER_USER
+                    ),
+                )
+                .reply_to(msg.id)
+                .parse_mode(ParseMode::Html)
+                .await?;
+                return Ok(());
             }
 
             match db::add_wallet(&pool, user_id, wallet, note).await {
-                Ok(true) => {
+                Ok(db::AddWalletResult::Added) => {
                     info!("User {} added wallet {}", user_id, wallet);
                     let note_text = note.map(|n| format!(" ({})", html::escape(n))).unwrap_or_default();
                     bot.send_message(
@@ -151,8 +184,23 @@ async fn handle_command(
                     .parse_mode(ParseMode::Html)
                     .await?;
                 }
-                Ok(false) => {
-                    bot.send_message(msg.chat.id, "⚠️ This wallet is already being tracked.")
+                Ok(db::AddWalletResult::Updated) => {
+                    info!("User {} updated note for wallet {}", user_id, wallet);
+                    let note_text = note.map(|n| format!(" to '{}'", html::escape(n))).unwrap_or_else(|| " (removed)".to_string());
+                    bot.send_message(
+                        msg.chat.id,
+                        format!(
+                            "✅ Updated note{}:\n<code>{}</code>",
+                            note_text,
+                            wallet.to_lowercase()
+                        ),
+                    )
+                    .reply_to(msg.id)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+                }
+                Ok(db::AddWalletResult::AlreadyExistsNoChange) => {
+                    bot.send_message(msg.chat.id, "⚠️ This wallet is already being tracked with the same note.")
                         .reply_to(msg.id)
                         .parse_mode(ParseMode::Html)
                         .await?;
@@ -166,12 +214,12 @@ async fn handle_command(
                 }
             }
         }
-        Command::Remove(wallet) => {
-            let wallet = wallet.trim();
-            if wallet.is_empty() {
+        Command::Remove(identifier) => {
+            let identifier = identifier.trim();
+            if identifier.is_empty() {
                 bot.send_message(
                     msg.chat.id,
-                    "❌ Please provide a wallet address.\n\nUsage: <code>/remove 0x...</code>",
+                    "❌ Please provide a wallet address, index (1-10), or note.\n\nUsage: <code>/remove &lt;address|index|note&gt;</code>",
                 )
                 .reply_to(msg.id)
                 .parse_mode(ParseMode::Html)
@@ -179,14 +227,37 @@ async fn handle_command(
                 return Ok(());
             }
 
-            match db::remove_wallet(&pool, user_id, wallet).await {
+            // Resolve the identifier to a wallet address
+            let resolved = match resolve_wallet_identifier(&pool, user_id, identifier).await {
+                Ok(Some((addr, _))) => addr,
+                Ok(None) => {
+                    bot.send_message(
+                        msg.chat.id,
+                        "❌ Wallet not found. Use <code>/list</code> to see your tracked wallets.",
+                    )
+                    .reply_to(msg.id)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("Failed to resolve wallet identifier: {}", e);
+                    bot.send_message(msg.chat.id, "❌ Failed to remove wallet. Please try again.")
+                        .reply_to(msg.id)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                    return Ok(());
+                }
+            };
+
+            match db::remove_wallet(&pool, user_id, &resolved).await {
                 Ok(true) => {
-                    info!("User {} removed wallet {}", user_id, wallet);
+                    info!("User {} removed wallet {}", user_id, resolved);
                     bot.send_message(
                         msg.chat.id,
                         format!(
                             "✅ Stopped tracking wallet:\n<code>{}</code>",
-                            wallet.to_lowercase()
+                            resolved
                         ),
                     )
                     .reply_to(msg.id)
@@ -223,7 +294,7 @@ async fn handle_command(
                         .iter()
                         .enumerate()
                         .map(|(i, w)| {
-                            let display = format_wallet_display(&w.wallet_address, w.note.as_deref());
+                            let display = format_wallet_display_full(&w.wallet_address, w.note.as_deref());
                             format!("{}. {}", i + 1, display)
                         })
                         .collect::<Vec<_>>()
@@ -249,12 +320,12 @@ async fn handle_command(
                 .await?;
             }
         },
-        Command::Positions(wallet) => {
-            let wallet = wallet.trim();
-            if wallet.is_empty() {
+        Command::Positions(identifier) => {
+            let identifier = identifier.trim();
+            if identifier.is_empty() {
                 bot.send_message(
                     msg.chat.id,
-                    "❌ Please provide a wallet address.\n\nUsage: <code>/positions 0x...</code>",
+                    "❌ Please provide a wallet address, index (1-10), or note.\n\nUsage: <code>/positions &lt;address|index|note&gt;</code>",
                 )
                 .reply_to(msg.id)
                 .parse_mode(ParseMode::Html)
@@ -262,32 +333,47 @@ async fn handle_command(
                 return Ok(());
             }
 
-            if !is_valid_address(wallet) {
-                bot.send_message(
-                    msg.chat.id,
-                    "❌ Invalid wallet address format. Please provide a valid Ethereum address.",
-                )
-                .reply_to(msg.id)
-                .parse_mode(ParseMode::Html)
-                .await?;
-                return Ok(());
-            }
+            // Resolve the identifier to a wallet address
+            let (wallet, note) = match resolve_wallet_identifier(&pool, user_id, identifier).await {
+                Ok(Some((addr, note))) => (addr, note),
+                Ok(None) => {
+                    // If not found in user's wallets but looks like a valid address, use it directly
+                    if is_valid_address(identifier) {
+                        (identifier.to_lowercase(), None)
+                    } else {
+                        bot.send_message(
+                            msg.chat.id,
+                            "❌ Wallet not found. Provide a valid address, index (1-10), or note.",
+                        )
+                        .reply_to(msg.id)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to resolve wallet identifier: {}", e);
+                    bot.send_message(msg.chat.id, "❌ Failed to fetch positions. Please try again.")
+                        .reply_to(msg.id)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                    return Ok(());
+                }
+            };
 
             let client = Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client");
 
-            // Get note for wallet if exists
-            let note = db::get_wallet_note(&pool, wallet).await.ok().flatten();
-            let wallet_display = format_wallet_display(wallet, note.as_deref());
+            let wallet_display = format_wallet_display(&wallet, note.as_deref());
 
             let hyperdash_link = format!(
                 "<a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
                 wallet
             );
 
-            match hyperliquid::fetch_user_state(&client, wallet).await {
+            match hyperliquid::fetch_user_state(&client, &wallet).await {
                 Ok(user_state) => {
                     let positions: Vec<_> = user_state
                         .asset_positions
@@ -404,6 +490,48 @@ fn is_valid_address(address: &str) -> bool {
         && address[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
+fn is_reserved_note(note: &str) -> bool {
+    // Notes cannot be numbers 1-10
+    if let Ok(n) = note.parse::<u32>() {
+        n >= 1 && n <= 10
+    } else {
+        false
+    }
+}
+
+/// Resolve a wallet identifier which can be:
+/// - An index (1-10) referring to the user's wallet list
+/// - A note name (case-insensitive)
+/// - A wallet address
+/// Returns (wallet_address, note) if found
+async fn resolve_wallet_identifier(
+    pool: &SqlitePool,
+    user_id: i64,
+    identifier: &str,
+) -> anyhow::Result<Option<(String, Option<String>)>> {
+    // First, try parsing as index (1-10)
+    if let Ok(index) = identifier.parse::<usize>() {
+        if index >= 1 && index <= 10 {
+            if let Some(wallet) = db::get_wallet_by_index(pool, user_id, index).await? {
+                return Ok(Some((wallet.wallet_address, wallet.note)));
+            }
+        }
+    }
+
+    // Second, try finding by note (case-insensitive)
+    if let Some(wallet) = db::get_wallet_by_note(pool, user_id, identifier).await? {
+        return Ok(Some((wallet.wallet_address, wallet.note)));
+    }
+
+    // Finally, if it looks like an address, return it as-is
+    if is_valid_address(identifier) {
+        let note = db::get_wallet_note(pool, identifier).await.ok().flatten();
+        return Ok(Some((identifier.to_lowercase(), note)));
+    }
+
+    Ok(None)
+}
+
 fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
     let short_addr = format!(
         "{}...{}",
@@ -413,5 +541,12 @@ fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
     match note {
         Some(n) => format!("<code>{}</code> - {}", short_addr, html::escape(n)),
         None => format!("<code>{}</code>", short_addr),
+    }
+}
+
+fn format_wallet_display_full(wallet_address: &str, note: Option<&str>) -> String {
+    match note {
+        Some(n) => format!("<code>{}</code> - {}", wallet_address, html::escape(n)),
+        None => format!("<code>{}</code>", wallet_address),
     }
 }
