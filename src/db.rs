@@ -58,7 +58,7 @@ pub async fn add_wallet(
     note: Option<&str>,
 ) -> anyhow::Result<AddWalletResult> {
     let wallet_lower = wallet_address.to_lowercase();
-    
+
     // Check if wallet already exists and get current note
     let existing = sqlx::query_scalar!(
         "SELECT note FROM tracked_wallets WHERE user_id = ? AND wallet_address = ?",
@@ -67,7 +67,7 @@ pub async fn add_wallet(
     )
     .fetch_optional(pool)
     .await?;
-    
+
     match existing {
         Some(existing_note) => {
             // Wallet exists, check if note is different
@@ -200,7 +200,11 @@ pub async fn upsert_position(
 }
 
 /// Delete a closed position
-pub async fn delete_position(pool: &SqlitePool, wallet_address: &str, coin: &str) -> anyhow::Result<()> {
+pub async fn delete_position(
+    pool: &SqlitePool,
+    wallet_address: &str,
+    coin: &str,
+) -> anyhow::Result<()> {
     let wallet_lower = wallet_address.to_lowercase();
     sqlx::query!(
         "DELETE FROM active_positions WHERE wallet_address = ? AND coin = ?",
@@ -214,7 +218,10 @@ pub async fn delete_position(pool: &SqlitePool, wallet_address: &str, coin: &str
 }
 
 /// Get the note for a wallet address (for any user)
-pub async fn get_wallet_note(pool: &SqlitePool, wallet_address: &str) -> anyhow::Result<Option<String>> {
+pub async fn get_wallet_note(
+    pool: &SqlitePool,
+    wallet_address: &str,
+) -> anyhow::Result<Option<String>> {
     let wallet_lower = wallet_address.to_lowercase();
     let result = sqlx::query_scalar!(
         "SELECT note FROM tracked_wallets WHERE wallet_address = ? LIMIT 1",
@@ -246,15 +253,13 @@ pub async fn note_exists_for_user(
             .fetch_one(pool)
             .await?
         }
-        None => {
-            sqlx::query_scalar!(
-                "SELECT COUNT(*) as count FROM tracked_wallets WHERE user_id = ? AND LOWER(note) = ?",
-                user_id,
-                note_lower
-            )
-            .fetch_one(pool)
-            .await?
-        }
+        None => sqlx::query_scalar!(
+            "SELECT COUNT(*) as count FROM tracked_wallets WHERE user_id = ? AND LOWER(note) = ?",
+            user_id,
+            note_lower
+        )
+        .fetch_one(pool)
+        .await?,
     };
 
     Ok(result > 0)

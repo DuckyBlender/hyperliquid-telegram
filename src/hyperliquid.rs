@@ -150,9 +150,14 @@ pub async fn monitor_positions(pool: SqlitePool, bot: Bot, state: Arc<RwLock<Pos
 
                     for change in changes {
                         for (user_id, note) in &user_infos {
-                            if let Err(e) =
-                                send_position_notification(&bot, *user_id, &wallet_address, note.as_deref(), &change)
-                                    .await
+                            if let Err(e) = send_position_notification(
+                                &bot,
+                                *user_id,
+                                &wallet_address,
+                                note.as_deref(),
+                                &change,
+                            )
+                            .await
                             {
                                 error!("Failed to send notification to {}: {}", user_id, e);
                             }
@@ -395,7 +400,11 @@ fn format_wallet_display(wallet_address: &str, note: Option<&str>) -> String {
 }
 
 fn calculate_current_price_info(entry_price: f64, position_value: f64, size: f64) -> (f64, String) {
-    let current_price = if size > 0.0 { position_value / size } else { 0.0 };
+    let current_price = if size > 0.0 {
+        position_value / size
+    } else {
+        0.0
+    };
     let current_price_rounded = (current_price * 10000000000.0).round() / 10000000000.0;
     let price_diff = current_price_rounded - entry_price;
     let price_diff_str = if price_diff >= 0.0 {
@@ -408,7 +417,11 @@ fn calculate_current_price_info(entry_price: f64, position_value: f64, size: f64
 
 fn calculate_pnl_percent(entry_price: f64, size: f64, unrealized_pnl: f64) -> String {
     let entry_value = entry_price * size;
-    let pnl_pct = if entry_value > 0.0 { (unrealized_pnl / entry_value) * 100.0 } else { 0.0 };
+    let pnl_pct = if entry_value > 0.0 {
+        (unrealized_pnl / entry_value) * 100.0
+    } else {
+        0.0
+    };
     if pnl_pct >= 0.0 {
         format!("+{:.2}%", pnl_pct)
     } else {
@@ -488,9 +501,14 @@ async fn send_position_notification(
             unrealized_pnl,
             position_value,
         } => {
-            let (current_price_rounded, price_diff_str) = calculate_current_price_info(*entry_price, *position_value, *new_size);
+            let (current_price_rounded, price_diff_str) =
+                calculate_current_price_info(*entry_price, *position_value, *new_size);
             let pnl_pct_str = calculate_pnl_percent(*entry_price, *new_size, *unrealized_pnl);
-            let size_change_pct = if *old_size > 0.0 { ((new_size - old_size) / old_size) * 100.0 } else { 0.0 };
+            let size_change_pct = if *old_size > 0.0 {
+                ((new_size - old_size) / old_size) * 100.0
+            } else {
+                0.0
+            };
             format!(
                 "<b>⬆️ {}x {} {} Increased</b>\n\n\
                  👛 Wallet: {}\n\
@@ -525,9 +543,14 @@ async fn send_position_notification(
             unrealized_pnl,
             position_value,
         } => {
-            let (current_price_rounded, price_diff_str) = calculate_current_price_info(*entry_price, *position_value, *new_size);
+            let (current_price_rounded, price_diff_str) =
+                calculate_current_price_info(*entry_price, *position_value, *new_size);
             let pnl_pct_str = calculate_pnl_percent(*entry_price, *new_size, *unrealized_pnl);
-            let size_change_pct = if *old_size > 0.0 { ((old_size - new_size) / old_size) * 100.0 } else { 0.0 };
+            let size_change_pct = if *old_size > 0.0 {
+                ((old_size - new_size) / old_size) * 100.0
+            } else {
+                0.0
+            };
             format!(
                 "<b>⬇️ {}x {} {} Decreased</b>\n\n\
                  👛 Wallet: {}\n\

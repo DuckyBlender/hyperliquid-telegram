@@ -3,7 +3,10 @@ use reqwest::Client;
 use sqlx::SqlitePool;
 use std::time::Duration;
 use teloxide::{
-    prelude::*, sugar::request::RequestReplyExt, types::{Message, ParseMode}, utils::{command::BotCommands, html}
+    prelude::*,
+    sugar::request::RequestReplyExt,
+    types::{Message, ParseMode},
+    utils::{command::BotCommands, html},
 };
 
 use crate::db;
@@ -171,7 +174,9 @@ async fn handle_command(
             match db::add_wallet(&pool, user_id, wallet, note).await {
                 Ok(db::AddWalletResult::Added) => {
                     info!("User {} added wallet {}", user_id, wallet);
-                    let note_text = note.map(|n| format!(" ({})", html::escape(n))).unwrap_or_default();
+                    let note_text = note
+                        .map(|n| format!(" ({})", html::escape(n)))
+                        .unwrap_or_default();
                     bot.send_message(
                         msg.chat.id,
                         format!(
@@ -186,7 +191,9 @@ async fn handle_command(
                 }
                 Ok(db::AddWalletResult::Updated) => {
                     info!("User {} updated note for wallet {}", user_id, wallet);
-                    let note_text = note.map(|n| format!(" to '{}'", html::escape(n))).unwrap_or_else(|| " (removed)".to_string());
+                    let note_text = note
+                        .map(|n| format!(" to '{}'", html::escape(n)))
+                        .unwrap_or_else(|| " (removed)".to_string());
                     bot.send_message(
                         msg.chat.id,
                         format!(
@@ -200,10 +207,13 @@ async fn handle_command(
                     .await?;
                 }
                 Ok(db::AddWalletResult::AlreadyExistsNoChange) => {
-                    bot.send_message(msg.chat.id, "⚠️ This wallet is already being tracked with the same note.")
-                        .reply_to(msg.id)
-                        .parse_mode(ParseMode::Html)
-                        .await?;
+                    bot.send_message(
+                        msg.chat.id,
+                        "⚠️ This wallet is already being tracked with the same note.",
+                    )
+                    .reply_to(msg.id)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
                 }
                 Err(e) => {
                     error!("Failed to add wallet: {}", e);
@@ -255,10 +265,7 @@ async fn handle_command(
                     info!("User {} removed wallet {}", user_id, resolved);
                     bot.send_message(
                         msg.chat.id,
-                        format!(
-                            "✅ Stopped tracking wallet:\n<code>{}</code>",
-                            resolved
-                        ),
+                        format!("✅ Stopped tracking wallet:\n<code>{}</code>", resolved),
                     )
                     .reply_to(msg.id)
                     .parse_mode(ParseMode::Html)
@@ -294,7 +301,8 @@ async fn handle_command(
                         .iter()
                         .enumerate()
                         .map(|(i, w)| {
-                            let display = format_wallet_display_full(&w.wallet_address, w.note.as_deref());
+                            let display =
+                                format_wallet_display_full(&w.wallet_address, w.note.as_deref());
                             format!("{}. {}", i + 1, display)
                         })
                         .collect::<Vec<_>>()
@@ -353,10 +361,13 @@ async fn handle_command(
                 }
                 Err(e) => {
                     error!("Failed to resolve wallet identifier: {}", e);
-                    bot.send_message(msg.chat.id, "❌ Failed to fetch positions. Please try again.")
-                        .reply_to(msg.id)
-                        .parse_mode(ParseMode::Html)
-                        .await?;
+                    bot.send_message(
+                        msg.chat.id,
+                        "❌ Failed to fetch positions. Please try again.",
+                    )
+                    .reply_to(msg.id)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
                     return Ok(());
                 }
             };
@@ -389,8 +400,7 @@ async fn handle_command(
                                  👛 Wallet: {}\n\n\
                                  <i>No open positions</i>\n\n\
                                  {}",
-                                wallet_display,
-                                hyperdash_link
+                                wallet_display, hyperdash_link
                             ),
                         )
                         .reply_to(msg.id)
@@ -406,9 +416,17 @@ async fn handle_command(
                             let pos = &ap.position;
                             let size: f64 = pos.szi.parse().unwrap_or(0.0);
                             let is_long = size > 0.0;
-                            let entry_price: f64 = pos.entry_px.as_ref().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+                            let entry_price: f64 = pos
+                                .entry_px
+                                .as_ref()
+                                .and_then(|p| p.parse().ok())
+                                .unwrap_or(0.0);
                             let position_value: f64 = pos.position_value.parse().unwrap_or(0.0);
-                            let current_price = if size.abs() > 0.0 { position_value / size.abs() } else { 0.0 };
+                            let current_price = if size.abs() > 0.0 {
+                                position_value / size.abs()
+                            } else {
+                                0.0
+                            };
                             let unrealized_pnl: f64 = pos.unrealized_pnl.parse().unwrap_or(0.0);
                             let leverage = pos.leverage.as_ref().map(|l| l.value).unwrap_or(1);
                             let direction_str = if is_long { "Long" } else { "Short" };
@@ -420,18 +438,32 @@ async fn handle_command(
                             };
                             // Calculate PnL percentage (based on entry value)
                             let entry_value = entry_price * size.abs();
-                            let pnl_pct = if entry_value > 0.0 { (unrealized_pnl / entry_value) * 100.0 } else { 0.0 };
+                            let pnl_pct = if entry_value > 0.0 {
+                                (unrealized_pnl / entry_value) * 100.0
+                            } else {
+                                0.0
+                            };
                             let pnl_pct_str = if pnl_pct >= 0.0 {
                                 format!("+{:.2}%", pnl_pct)
                             } else {
                                 format!("{:.2}%", pnl_pct)
                             };
                             // Round to avoid floating point artifacts like 2744.7999999999997
-                            let current_price_rounded = (current_price * 10000000000.0).round() / 10000000000.0; // 10 decimal places
-                            let entry_str = format!("{}", entry_price).trim_end_matches('0').trim_end_matches('.').to_string();
-                            let current_str = format!("{}", current_price_rounded).trim_end_matches('0').trim_end_matches('.').to_string();
-                            let size_str = format!("{}", size.abs()).trim_end_matches('0').trim_end_matches('.').to_string();
-                            
+                            let current_price_rounded =
+                                (current_price * 10000000000.0).round() / 10000000000.0; // 10 decimal places
+                            let entry_str = format!("{}", entry_price)
+                                .trim_end_matches('0')
+                                .trim_end_matches('.')
+                                .to_string();
+                            let current_str = format!("{}", current_price_rounded)
+                                .trim_end_matches('0')
+                                .trim_end_matches('.')
+                                .to_string();
+                            let size_str = format!("{}", size.abs())
+                                .trim_end_matches('0')
+                                .trim_end_matches('.')
+                                .to_string();
+
                             // Calculate price difference
                             let price_diff = current_price_rounded - entry_price;
                             let price_diff_str = if price_diff >= 0.0 {
@@ -493,7 +525,7 @@ fn is_valid_address(address: &str) -> bool {
 fn is_reserved_note(note: &str) -> bool {
     // Notes cannot be numbers 1-10
     if let Ok(n) = note.parse::<u32>() {
-        n >= 1 && n <= 10
+        (1..=10).contains(&n)
     } else {
         false
     }
@@ -503,6 +535,7 @@ fn is_reserved_note(note: &str) -> bool {
 /// - An index (1-10) referring to the user's wallet list
 /// - A note name (case-insensitive)
 /// - A wallet address
+/// 
 /// Returns (wallet_address, note) if found
 async fn resolve_wallet_identifier(
     pool: &SqlitePool,
@@ -510,13 +543,11 @@ async fn resolve_wallet_identifier(
     identifier: &str,
 ) -> anyhow::Result<Option<(String, Option<String>)>> {
     // First, try parsing as index (1-10)
-    if let Ok(index) = identifier.parse::<usize>() {
-        if index >= 1 && index <= 10 {
-            if let Some(wallet) = db::get_wallet_by_index(pool, user_id, index).await? {
+    if let Ok(index) = identifier.parse::<usize>()
+        && (1..=10).contains(&index)
+            && let Some(wallet) = db::get_wallet_by_index(pool, user_id, index).await? {
                 return Ok(Some((wallet.wallet_address, wallet.note)));
             }
-        }
-    }
 
     // Second, try finding by note (case-insensitive)
     if let Some(wallet) = db::get_wallet_by_note(pool, user_id, identifier).await? {
