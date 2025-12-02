@@ -2,6 +2,8 @@ use log::info;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::collections::HashMap;
 
+pub const MAX_WALLETS_PER_USER: i64 = 10;
+
 pub async fn init_db(database_url: &str) -> anyhow::Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -29,6 +31,17 @@ pub struct ActivePosition {
     pub entry_px: String,
     pub unrealized_pnl: String,
     pub leverage: i64,
+}
+
+pub async fn get_user_wallet_count(pool: &SqlitePool, user_id: i64) -> anyhow::Result<i64> {
+    let count = sqlx::query_scalar!(
+        "SELECT COUNT(*) as count FROM tracked_wallets WHERE user_id = ?",
+        user_id
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(count as i64)
 }
 
 pub async fn add_wallet(

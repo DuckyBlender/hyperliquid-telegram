@@ -109,6 +109,32 @@ async fn handle_command(
                 return Ok(());
             }
 
+            // Check wallet limit
+            match db::get_user_wallet_count(&pool, user_id).await {
+                Ok(count) if count >= db::MAX_WALLETS_PER_USER => {
+                    bot.send_message(
+                        msg.chat.id,
+                        format!(
+                            "❌ You've reached the maximum limit of {} tracked wallets.\n\nUse <code>/remove &lt;wallet&gt;</code> to remove a wallet first.",
+                            db::MAX_WALLETS_PER_USER
+                        ),
+                    )
+                    .reply_to(msg.id)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("Failed to check wallet count: {}", e);
+                    bot.send_message(msg.chat.id, "❌ Failed to add wallet. Please try again.")
+                        .reply_to(msg.id)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+
             match db::add_wallet(&pool, user_id, wallet, note).await {
                 Ok(true) => {
                     info!("User {} added wallet {}", user_id, wallet);
