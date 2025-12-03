@@ -493,8 +493,8 @@ async fn send_position_notification(
                 "<b>📉 {}x {} {} Closed</b>\n\n\
                  👛 Wallet: {}\n\
                  💰 Entry: {}\n\
-                 � Exit: {} ({})\n\
-                 �💵 PnL: {}\n\
+                 📍 Exit: {} ({})\n\
+                 💵 PnL: {}\n\
                  {}",
                 leverage,
                 coin,

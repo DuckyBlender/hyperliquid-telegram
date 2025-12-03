@@ -535,7 +535,7 @@ fn is_reserved_note(note: &str) -> bool {
 /// - An index (1-10) referring to the user's wallet list
 /// - A note name (case-insensitive)
 /// - A wallet address
-/// 
+///
 /// Returns (wallet_address, note) if found
 async fn resolve_wallet_identifier(
     pool: &SqlitePool,
@@ -545,9 +545,10 @@ async fn resolve_wallet_identifier(
     // First, try parsing as index (1-10)
     if let Ok(index) = identifier.parse::<usize>()
         && (1..=10).contains(&index)
-            && let Some(wallet) = db::get_wallet_by_index(pool, user_id, index).await? {
-                return Ok(Some((wallet.wallet_address, wallet.note)));
-            }
+        && let Some(wallet) = db::get_wallet_by_index(pool, user_id, index).await?
+    {
+        return Ok(Some((wallet.wallet_address, wallet.note)));
+    }
 
     // Second, try finding by note (case-insensitive)
     if let Some(wallet) = db::get_wallet_by_note(pool, user_id, identifier).await? {
