@@ -205,6 +205,7 @@ pub enum PositionChange {
         entry_price: f64,
         was_long: bool,
         leverage: u32,
+        size: f64,
     },
     Increased {
         coin: String,
@@ -258,6 +259,7 @@ async fn detect_position_changes(
             let was_long = !old_pos.size.starts_with('-');
             let unrealized_pnl: f64 = old_pos.unrealized_pnl.parse().unwrap_or(0.0);
             let entry_price: f64 = old_pos.entry_px.parse().unwrap_or(0.0);
+            let size: f64 = old_pos.size.parse::<f64>().unwrap_or(0.0).abs();
 
             // Delete from DB
             if let Err(e) = db::delete_position(pool, wallet_address, &coin).await {
@@ -270,6 +272,7 @@ async fn detect_position_changes(
                 entry_price,
                 was_long,
                 leverage: old_pos.leverage,
+                size,
             });
         }
     }
@@ -368,9 +371,9 @@ async fn detect_position_changes(
 
 fn format_pnl(pnl: f64) -> String {
     if pnl >= 0.0 {
-        format!("🟢 +${:.2}", pnl)
+        format!("+${:.2}", pnl)
     } else {
-        format!("🔴 -${:.2}", pnl.abs())
+        format!("-${:.2}", pnl.abs())
     }
 }
 
@@ -464,18 +467,42 @@ async fn send_position_notification(
             entry_price,
             was_long,
             leverage,
+            size,
         } => {
+            // Calculate exit price from PnL
+            // For longs: exit_price = entry_price + (pnl / size)
+            // For shorts: exit_price = entry_price - (pnl / size)
+            let exit_price = if *size > 0.0 {
+                if *was_long {
+                    entry_price + (realized_pnl / size)
+                } else {
+                    entry_price - (realized_pnl / size)
+                }
+            } else {
+                *entry_price
+            };
+            let exit_price_rounded = (exit_price * 10000000000.0).round() / 10000000000.0;
+            let price_diff = exit_price_rounded - entry_price;
+            let price_diff_str = if price_diff >= 0.0 {
+                format!("+${:.2}", price_diff)
+            } else {
+                format!("-${:.2}", price_diff.abs())
+            };
+
             format!(
                 "<b>📉 {}x {} {} Closed</b>\n\n\
                  👛 Wallet: {}\n\
                  💰 Entry: {}\n\
-                 💵 PnL: {}\n\
+                 � Exit: {} ({})\n\
+                 �💵 PnL: {}\n\
                  {}",
                 leverage,
                 coin,
                 direction_str(*was_long),
                 wallet_display,
                 format_price(*entry_price),
+                format_price(exit_price_rounded),
+                price_diff_str,
                 format_pnl(*realized_pnl),
                 hyperdash_link
             )

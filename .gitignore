@@ -5,3 +5,4 @@ Cargo.lock
 *.log
 .sqlx
 *.md
+.DS_Store
