@@ -380,7 +380,7 @@ async fn handle_command(
             let wallet_display = format_wallet_display(&wallet, note.as_deref(), false);
 
             let hyperdash_link = format!(
-                "<a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
+                "<a href=\"https://app.coinmarketman.com/hypertracker/wallet/{}\">Hyperdash</a>",
                 wallet
             );
 

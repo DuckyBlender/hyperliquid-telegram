@@ -431,7 +431,7 @@ async fn send_position_notification(
     let wallet_display = format_wallet_display(wallet_address, note, false);
 
     let hyperdash_link = format!(
-        "🌐 <a href=\"https://legacy.hyperdash.com/trader/{}\">Hyperdash</a>",
+        "🌐 <a href=\"https://app.coinmarketman.com/hypertracker/wallet/{}\">Hypertracker</a>",
         wallet_address
     );
 
